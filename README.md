@@ -16,6 +16,8 @@ An intelligent invoice processing system that automatically analyzes and organiz
 - 💰 Cost tracking for API usage
 - 🔄 Automatic file organization
 - ⚡ Real-time file watching
+- 🌐 Web-based interface for easy configuration
+- 🚫 Blocked terms filtering
 
 ## Prerequisites
 
@@ -48,13 +50,21 @@ mkdir -p ~/Documents/Scans ~/Documents/Invoices
 
 ## Usage
 
-1. Start the watcher:
+1. Start the web server:
 ```bash
-ruby invoice_processor.rb
+./simple_web.rb
 ```
 
-2. Place invoice images in the `~/Documents/Scans` folder
-3. Processed files will be automatically moved to `~/Documents/Invoices` with standardized naming
+2. The web interface will automatically open in your default browser
+3. Configure your settings:
+   - Watch folder (default: `~/Documents/Scans`)
+   - Output folder (default: `~/Documents/Invoices`)
+   - OpenAI API key
+   - Blocked terms (comma-separated)
+4. Click "Save Settings" to save your configuration
+5. Click "Start Watching" to begin monitoring for new invoices
+6. Place invoice images in the watch folder
+7. Processed files will be automatically moved to the output folder with standardized naming
 
 ## Cost Tracking
 
@@ -64,6 +74,35 @@ The script tracks API usage costs:
 - Image input: $0.00765 per image
 
 Costs are logged for each API call and totaled during runtime.
+
+## Failed Files
+
+If an invoice fails to process, it will be:
+1. Copied to the output folder with a "FAILED_" prefix
+2. Logged with detailed error information
+3. Skipped in future processing attempts
+
+## Packaging for Distribution
+
+### Windows
+
+To create a standalone Windows executable:
+
+```bash
+ruby package_windows.rb
+```
+
+This will create a `watcher_ai.exe` file that can be distributed to Windows users.
+
+### macOS
+
+To create a standalone macOS application:
+
+```bash
+ruby package_macos.rb
+```
+
+This will create a `Watcher AI.app` file that can be distributed to macOS users.
 
 ## License
 

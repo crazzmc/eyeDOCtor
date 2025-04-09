@@ -27,8 +27,8 @@
 *.swp
 *.swo
 
-# Project specific
-/Documents/Scans/*
-/Documents/Invoices/*
-!Documents/Scans/.gitkeep
-!Documents/Invoices/.gitkeep 
+# Packaged applications
+*.zip
+.bundle/
+Watcher AI.app/
+*.app/

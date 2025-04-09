@@ -1,5 +1,12 @@
 source 'https://rubygems.org'
 
-gem 'listen', '~> 3.8'  # File system monitoring
-gem 'openai', '~> 5.0'  # OpenAI API client
-gem 'dotenv', '~> 2.8'  # Environment variable management 
+gem 'sinatra'
+gem 'dotenv'
+gem 'webrick'
+gem 'listen'
+gem 'ruby-openai'
+gem 'json'
+gem 'redcarpet'
+# gem 'tk', '~> 0.4.0'    # GUI toolkit
+# gem 'ocra', '~> 1.3.5'  # Windows executable creator
+# gem 'furoshiki', '~> 0.5.0'  # macOS app packager 
