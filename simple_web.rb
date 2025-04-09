@@ -21,36 +21,36 @@ $blocked_terms = ENV['BLOCKED_TERMS'] || ''
 
 # Documentation content
 DOCUMENTATION = <<~MARKDOWN
-# Document Scanner & Organizer
+# eyeDOCtor - Smart Document Assistant
 
-## What This App Does
-This app automatically organizes your scanned documents by:
-- Watching a folder for new scans
-- Using AI to read and understand the content
-- Renaming files with useful information (dates, names, numbers)
-- Moving them to an organized folder
+## What eyeDOCtor Does
+This app intelligently examines and organizes your documents by:
+- Monitoring your scan folder with AI-powered vision
+- Diagnosing and understanding document content
+- Prescribing proper names based on content
+- Filing them in your organized folder
 
 ## Quick Start Guide
-1. **Set Up Your Folders**
-   - Choose a folder to watch for new scans
+1. **Set Up Your Document Folders**
+   - Select a folder for incoming documents
    - Choose where you want organized files to go
    - Both folders will be created automatically
 
 2. **Add Your API Key**
    - Enter your OpenAI API key
-   - This lets the app read and understand your documents
+   - This powers eyeDOCtor's document vision
    - Your key is kept private and secure
 
-3. **Start Scanning**
-   - Click "Start Watching" to begin
-   - Drop any scans into your watch folder
-   - The app will automatically process them
+3. **Start Document Processing**
+   - Click "Start Scanning" to begin
+   - Drop any documents into your scan folder
+   - eyeDOCtor will automatically examine them
 
 ## Supported Documents
-- Invoices
-- Receipts
-- Contracts
-- Letters
+- Invoices & Bills
+- Medical Records
+- Contracts & Agreements
+- Letters & Correspondence
 - Any document with text
 
 ## File Formats
@@ -59,23 +59,23 @@ This app automatically organizes your scanned documents by:
 - PDF files (automatically converted)
 
 ## How Files Are Named
-Files are renamed using information found in the document:
-- Date (if found)
-- Company or sender name
-- Document number or reference
-- Example: "2024-04-15_AcmeCorp_Invoice123.pdf"
+Files are diagnosed and renamed using key information:
+- Date (when available)
+- Organization or sender name
+- Document reference numbers
+- Example: "2024-04-15_MedicalCenter_Report123.pdf"
 
 ## Troubleshooting
-- Check the logs in your output folder
-- Failed files are kept with "FAILED_" prefix
-- Make sure your folders have proper permissions
+- Check the diagnosis logs in your output folder
+- Unprocessed files are marked with "UNDIAGNOSED_" prefix
+- Ensure folder permissions are correct
 - Verify your API key is valid
 
 ## Tips
-- Place scans directly in the watch folder
-- Wait a few seconds after scanning before moving to next document
-- Use clear, well-lit scans for best results
-- Keep file names simple and avoid special characters
+- Use clear, well-lit scans for best diagnosis
+- Allow a few seconds between document scans
+- Keep original filenames simple
+- Avoid special characters in filenames
 MARKDOWN
 
 # Set up Sinatra
@@ -141,19 +141,19 @@ post '/start' do
   
   # Validate inputs
   if $watch_folder.nil? || $watch_folder.empty?
-    return { success: false, message: "Please select a watch folder" }.to_json
+    return { success: false, message: "Please select a scan folder" }.to_json
   end
   
   if $output_folder.nil? || $output_folder.empty?
-    return { success: false, message: "Please select an output folder" }.to_json
+    return { success: false, message: "Please select an organized folder" }.to_json
   end
   
   unless File.directory?($watch_folder)
-    return { success: false, message: "Watch folder does not exist" }.to_json
+    return { success: false, message: "Scan folder does not exist" }.to_json
   end
   
   unless File.directory?($output_folder)
-    return { success: false, message: "Output folder does not exist" }.to_json
+    return { success: false, message: "Organized folder does not exist" }.to_json
   end
   
   if $api_key.empty?
@@ -182,9 +182,9 @@ post '/start' do
   end
   
   $is_running = true
-  $status = "Watching for invoices..."
+  $status = "Examining documents..."
   
-  { success: true, message: "Started watching for invoices" }.to_json
+  { success: true, message: "Started examining documents" }.to_json
 end
 
 post '/stop' do
@@ -196,9 +196,9 @@ post '/stop' do
     $is_running = false
     $status = "Stopped"
     
-    { success: true, message: "Stopped watching for invoices" }.to_json
+    { success: true, message: "Stopped examining documents" }.to_json
   else
-    { success: false, message: "Not currently watching" }.to_json
+    { success: false, message: "Not currently running" }.to_json
   end
 end
 

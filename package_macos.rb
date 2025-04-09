@@ -2,12 +2,14 @@
 
 require 'fileutils'
 require 'pathname'
+require 'erb'
 
 # Ensure we're in the project root
 Dir.chdir(File.dirname(__FILE__))
 
-# Create app structure
-app_name = "Watcher AI"
+# Configuration
+ruby_version = RUBY_VERSION
+app_name = "eyeDOCtor"
 app_path = "#{app_name}.app"
 contents_path = "#{app_path}/Contents"
 macos_path = "#{contents_path}/MacOS"
@@ -65,7 +67,7 @@ require_relative 'invoice_processor'
 require_relative 'simple_web'
 
 # Start the web server
-puts "Starting Watcher AI..."
+puts "Starting #{app_name}..."
 puts "Opening web interface in your browser..."
 
 # The web server will automatically open the browser

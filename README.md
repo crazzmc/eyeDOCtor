@@ -1,36 +1,30 @@
-# Watcher AI
+# eyeDOCtor
 
-An intelligent invoice processing system that automatically analyzes and organizes invoice images using OpenAI's GPT-4 Vision API.
+Your intelligent document assistant that examines, diagnoses, and organizes your documents with AI-powered vision.
 
 ## Features
 
-- 🔍 Automatic invoice detection and processing
-- 📝 Extracts key information:
-  - Company name
-  - Invoice number
-  - Invoice date
-- 🖼️ Supports multiple file formats:
-  - JPG/JPEG
-  - PNG
-  - PDF (automatically converted to JPG)
-- 💰 Cost tracking for API usage
-- 🔄 Automatic file organization
-- ⚡ Real-time file watching
-- 🌐 Web-based interface for easy configuration
-- 🚫 Blocked terms filtering
-
-## Prerequisites
-
-- Ruby 3.0 or higher
-- OpenAI API key
-- `pdftoppm` (for PDF processing)
+- 👁️ AI-powered document vision and analysis
+- 🏥 Smart document diagnosis and classification
+- 📝 Intelligent file naming based on content
+- 📁 Automated document organization
+- 🔒 Secure and private processing
+- 🌐 User-friendly web interface
 
 ## Installation
 
+### Prerequisites
+
+- Ruby 2.7 or higher
+- Bundler gem
+- OpenAI API key
+
+### Quick Start
+
 1. Clone the repository:
 ```bash
-git clone https://github.com/crazzmc/watcher_ai.git
-cd watcher_ai
+git clone https://github.com/crazzmc/eyedoctor.git
+cd eyedoctor
 ```
 
 2. Install dependencies:
@@ -38,76 +32,64 @@ cd watcher_ai
 bundle install
 ```
 
-3. Create a `.env` file in the project root:
-```
-OPENAI_API_KEY=your_api_key_here
+3. Start the application:
+```bash
+ruby simple_web.rb
 ```
 
-4. Create required directories:
-```bash
-mkdir -p ~/Documents/Scans ~/Documents/Invoices
-```
+The web interface will automatically open in your default browser.
 
 ## Usage
 
-1. Start the web server:
-```bash
-./simple_web.rb
-```
+1. Enter your OpenAI API key
+2. Select your scan folder (where new documents will be placed)
+3. Choose your organized folder (where processed documents will go)
+4. Click "Start Scanning" to begin
+5. Place documents in your scan folder to process them
 
-2. The web interface will automatically open in your default browser
-3. Configure your settings:
-   - Watch folder (default: `~/Documents/Scans`)
-   - Output folder (default: `~/Documents/Invoices`)
-   - OpenAI API key
-   - Blocked terms (comma-separated)
-4. Click "Save Settings" to save your configuration
-5. Click "Start Watching" to begin monitoring for new invoices
-6. Place invoice images in the watch folder
-7. Processed files will be automatically moved to the output folder with standardized naming
+## Document Processing
 
-## Cost Tracking
+eyeDOCtor examines documents and extracts key information such as:
+- Dates
+- Organization names
+- Document types
+- Reference numbers
+- Important content
 
-The script tracks API usage costs:
-- Input tokens: $0.01 per 1K tokens
-- Output tokens: $0.03 per 1K tokens
-- Image input: $0.00765 per image
+Files are then renamed and organized based on this information.
 
-Costs are logged for each API call and totaled during runtime.
-
-## Failed Files
-
-If an invoice fails to process, it will be:
-1. Copied to the output folder with a "FAILED_" prefix
-2. Logged with detailed error information
-3. Skipped in future processing attempts
-
-## Packaging for Distribution
+## Building Distributions
 
 ### Windows
 
-To create a standalone Windows executable:
+To create a Windows executable:
 
 ```bash
 ruby package_windows.rb
 ```
 
-This will create a `watcher_ai.exe` file that can be distributed to Windows users.
+This will create an `eyedoctor.exe` file that can be distributed to Windows users.
 
 ### macOS
 
-To create a standalone macOS application:
+To create a macOS application:
 
 ```bash
 ruby package_macos.rb
 ```
 
-This will create a `Watcher AI.app` file that can be distributed to macOS users.
+This will create an `eyeDOCtor.app` file that can be distributed to macOS users.
+
+## Security
+
+- API keys are stored locally and never transmitted
+- Documents are processed on your machine
+- No data is stored or sent to external servers (except OpenAI API)
+
+## Contributing
+
+Contributions are welcome! Please feel free to submit a Pull Request.
 
 ## License
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
-
-## Author
-
-- GitHub: [@crazzmc](https://github.com/crazzmc) 
+This project is licensed under the MIT License - see the LICENSE file for details. 

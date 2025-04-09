@@ -3,11 +3,12 @@
 require 'fileutils'
 require 'open-uri'
 require 'zip'
+require 'erb'
 
 TRAVELING_RUBY_VERSION = "20150715-2.2.2"
 
 # Your app's name and version
-APP_NAME = "watcher_ai"
+APP_NAME = "eyedoctor"
 VERSION = "1.0.0"
 
 # Create package directories
