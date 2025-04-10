@@ -37,7 +37,7 @@ info_plist = <<~XML
 <plist version="1.0">
 <dict>
     <key>CFBundleExecutable</key>
-    <string>watcher_ai</string>
+    <string>eyedoctor</string>
     <key>CFBundleIconFile</key>
     <string>icon.png</string>
     <key>CFBundleIdentifier</key>
@@ -114,11 +114,11 @@ bundle install --local || bundle install
 
 # Run the application with bundle exec
 echo "Starting application..."
-exec bundle exec ruby watcher_ai_main.rb 2>&1 | tee -a eyedoctor.log
+exec bundle exec ruby eyedoctor_main.rb 2>&1 | tee -a eyedoctor.log
 BASH
 
-File.write("#{macos_path}/watcher_ai", launcher_script)
-FileUtils.chmod(0755, "#{macos_path}/watcher_ai")
+File.write("#{macos_path}/eyedoctor", launcher_script)
+FileUtils.chmod(0755, "#{macos_path}/eyedoctor")
 
 # Copy application files
 FileUtils.cp_r('invoice_processor.rb', resources_path)
@@ -155,8 +155,8 @@ rescue => e
 end
 RUBY
 
-File.write("#{resources_path}/watcher_ai_main.rb", main_script)
-FileUtils.chmod(0755, "#{resources_path}/watcher_ai_main.rb")
+File.write("#{resources_path}/eyedoctor_main.rb", main_script)
+FileUtils.chmod(0755, "#{resources_path}/eyedoctor_main.rb")
 
 # Install dependencies in the app bundle
 puts "Installing dependencies in app bundle..."
