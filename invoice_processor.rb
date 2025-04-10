@@ -28,9 +28,24 @@ class InvoiceProcessor
   
   def initialize(watch_folder: nil, output_folder: nil, blocked_terms: [])
     setup_logger
-    @watch_folder = watch_folder
-    @output_folder = output_folder
-    @blocked_terms = blocked_terms || []
+    
+    # Get the application's resource directory
+    if ENV['APP_PATH']
+      app_dir = ENV['APP_PATH']
+    else
+      # Try to detect if we're running from the packaged app
+      if File.exist?(File.join(File.dirname(__FILE__), '..', 'Resources'))
+        app_dir = File.expand_path(File.join(File.dirname(__FILE__), '..', 'Resources'))
+      else
+        app_dir = File.dirname(__FILE__)
+      end
+    end
+    
+    # Set default paths if none provided
+    @watch_folder = watch_folder || File.expand_path('~/Documents/eyeDOCtor/watch')
+    @output_folder = output_folder || File.expand_path('~/Documents/eyeDOCtor/processed')
+    @blocked_terms = blocked_terms
+    
     setup_folders
     setup_openai
     @last_api_call = Time.now.to_f
@@ -334,15 +349,20 @@ class InvoiceProcessor
   def process_file(file_path)
     log_info("Processing file: #{file_path}")
     
+    # Add to processing queue
+    $processing_queue << File.basename(file_path)
+    
     # Skip if file doesn't exist or isn't readable
     unless File.exist?(file_path) && File.readable?(file_path)
       log_error("File does not exist or is not readable: #{file_path}")
+      $processing_queue.delete(File.basename(file_path))
       return
     end
     
     # Skip files with FAILED_ prefix
     if File.basename(file_path).start_with?('FAILED_')
       log_info("Skipping previously failed file: #{file_path}")
+      $processing_queue.delete(File.basename(file_path))
       return
     end
     
@@ -350,17 +370,12 @@ class InvoiceProcessor
     filename = File.basename(file_path).downcase
     if @blocked_terms && @blocked_terms.any? && @blocked_terms.any? { |term| filename.include?(term.downcase) }
       log_info("Skipping blocked file: #{file_path}")
+      $processing_queue.delete(File.basename(file_path))
       return
     end
     
     begin
-      # Convert PDF to JPG if necessary
-      if File.extname(file_path).downcase == '.pdf'
-        log_info("Converting PDF to JPG: #{file_path}")
-        file_path = convert_pdf_to_jpg(file_path)
-      end
-      
-      # Analyze with ChatGPT Vision
+      # Process the file directly without conversion
       result = analyze_with_chatgpt(file_path)
       
       # Validate required fields
@@ -380,6 +395,10 @@ class InvoiceProcessor
       move_file(file_path, new_filename)
       log_info("Successfully processed and moved file to: #{new_filename}")
       
+      # Add to processed files and remove from queue
+      $processed_files << new_filename
+      $processing_queue.delete(File.basename(file_path))
+      
     rescue => e
       log_error("Failed to process file #{file_path}: #{e.message}")
       log_error(e.backtrace.join("\n"))
@@ -394,6 +413,9 @@ class InvoiceProcessor
       rescue => move_error
         log_error("Failed to move failed file: #{move_error.message}")
       end
+      
+      # Remove from queue
+      $processing_queue.delete(File.basename(file_path))
     end
   end
 
@@ -427,13 +449,27 @@ class InvoiceProcessor
 
     # Format the filename
     sanitized_company = company_name.gsub(/[^0-9A-Za-z\s]/, '').strip.gsub(/\s+/, '_')
-    "#{date.strftime('%Y-%m-%d')}_#{sanitized_company}_#{invoice_number}.pdf"
+    original_extension = File.extname(original_path)
+    "#{date.strftime('%Y-%m-%d')}_#{sanitized_company}_#{invoice_number}#{original_extension}"
   end
 
   def move_file(original_path, new_filename)
     destination = File.join(@output_folder, new_filename)
     log_info("Moving file to: #{destination}")
-    FileUtils.mv(original_path, destination)
+    
+    begin
+      # First copy the file to ensure it's in the destination
+      FileUtils.cp(original_path, destination)
+      log_info("Successfully copied file to: #{destination}")
+      
+      # Then remove the original file
+      FileUtils.rm(original_path)
+      log_info("Successfully removed original file: #{original_path}")
+    rescue => e
+      log_error("Error moving file: #{e.message}")
+      log_error(e.backtrace.join("\n"))
+      raise e
+    end
   end
 
   def log_info(message)

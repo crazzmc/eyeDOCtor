@@ -4,7 +4,9 @@ require 'sinatra'
 require 'dotenv'
 require 'json'
 require 'redcarpet'
+require 'webrick'
 require_relative 'invoice_processor'
+require 'fileutils'
 
 # Load environment variables
 Dotenv.load
@@ -18,6 +20,8 @@ $watch_folder = nil
 $output_folder = nil
 $api_key = ENV['OPENAI_API_KEY'] || ''
 $blocked_terms = ENV['BLOCKED_TERMS'] || ''
+$processing_queue = []
+$processed_files = []
 
 # Documentation content
 DOCUMENTATION = <<~MARKDOWN
@@ -79,9 +83,17 @@ Files are diagnosed and renamed using key information:
 MARKDOWN
 
 # Set up Sinatra
-set :port, 4567
-set :bind, '0.0.0.0'
-set :server, 'webrick'
+configure do
+  set :port, 4567
+  set :bind, '0.0.0.0'
+  set :server, 'webrick'
+  set :run, true
+  set :server_settings, { 
+    :AccessLog => [],
+    :Logger => WEBrick::Log::new("/dev/null", 7)
+  }
+  enable :logging
+end
 
 # Markdown renderer
 def markdown(text)
@@ -104,21 +116,38 @@ def open_browser
   puts "📋 Press Ctrl+C to stop the server"
   puts "="*50 + "\n"
   
-  case RbConfig::CONFIG['host_os']
-  when /mswin|mingw|cygwin/
-    system("start #{url}")
-  when /darwin|mac os/
-    system("open #{url}")
-  when /linux|bsd/
-    system("xdg-open #{url}")
-  else
-    puts "Please open your browser and navigate to: #{url}"
+  # Try multiple methods to open the browser
+  success = false
+  
+  # Method 1: Using 'open' command
+  if RbConfig::CONFIG['host_os'] =~ /darwin|mac os/
+    success = system("open #{url}")
+  end
+  
+  # Method 2: Using 'xdg-open' for Linux
+  if !success && (RbConfig::CONFIG['host_os'] =~ /linux|bsd/)
+    success = system("xdg-open #{url}")
+  end
+  
+  # Method 3: Using 'start' for Windows
+  if !success && (RbConfig::CONFIG['host_os'] =~ /mswin|mingw|cygwin/)
+    success = system("start #{url}")
+  end
+  
+  # Method 4: Using Python's webbrowser module
+  if !success
+    begin
+      require 'open3'
+      Open3.popen3('python3 -c "import webbrowser; webbrowser.open(\'' + url + '\')"')
+    rescue
+      puts "Please open your browser and navigate to: #{url}"
+    end
   end
 end
 
 # Start the server and open the browser
 Thread.new do
-  sleep 3  # Give the server a moment to start
+  sleep 2  # Give the server time to start
   open_browser
 end
 
@@ -131,9 +160,42 @@ trap('INT') do
   exit
 end
 
+# Load saved settings
+def load_settings
+  settings_file = File.join(File.dirname(__FILE__), 'settings.json')
+  if File.exist?(settings_file)
+    settings = JSON.parse(File.read(settings_file))
+    $watch_folder = settings['watch_folder']
+    $output_folder = settings['output_folder']
+    $api_key = settings['api_key']
+    $blocked_terms = settings['blocked_terms']
+  end
+end
+
+# Save settings
+def save_settings
+  settings = {
+    'watch_folder' => $watch_folder,
+    'output_folder' => $output_folder,
+    'api_key' => $api_key,
+    'blocked_terms' => $blocked_terms
+  }
+  settings_file = File.join(File.dirname(__FILE__), 'settings.json')
+  File.write(settings_file, JSON.pretty_generate(settings))
+end
+
+# Load settings on startup
+load_settings
+
 # Routes
 get '/' do
   erb :index
+end
+
+# Serve the icon file
+get '/icon.png' do
+  content_type 'image/png'
+  send_file File.join(settings.public_folder, 'icon.png')
 end
 
 post '/start' do
@@ -204,42 +266,71 @@ end
 
 post '/update_settings' do
   content_type :json
-  
   data = JSON.parse(request.body.read)
   
-  $watch_folder = data['watch_folder'] if data['watch_folder']
-  $output_folder = data['output_folder'] if data['output_folder']
-  $api_key = data['api_key'] if data['api_key']
-  $blocked_terms = data['blocked_terms'] if data['blocked_terms']
+  $watch_folder = data['watch_folder']
+  $output_folder = data['output_folder']
+  $api_key = data['api_key']
+  $blocked_terms = data['blocked_terms']
   
-  { success: true, message: "Settings updated" }.to_json
+  # Save settings to file
+  save_settings
+  
+  # Update environment variables
+  ENV['OPENAI_API_KEY'] = $api_key
+  ENV['BLOCKED_TERMS'] = $blocked_terms
+  
+  { success: true, message: "Settings saved successfully" }.to_json
 end
 
 get '/status' do
   content_type :json
-  
   {
-    is_running: $is_running,
     status: $status,
     watch_folder: $watch_folder,
     output_folder: $output_folder,
-    api_key: $api_key.empty? ? '' : '********',
-    blocked_terms: $blocked_terms
+    api_key: $api_key,
+    blocked_terms: $blocked_terms,
+    is_running: $is_running,
+    processing_queue: $processing_queue,
+    processed_files: $processed_files
   }.to_json
 end
 
 get '/select_folder' do
   content_type :json
-  folder_type = params['type']
-  folder_path = params['path']
   
-  if folder_type == 'watch' && File.directory?(folder_path)
-    $watch_folder = folder_path
-  elsif folder_type == 'output' && File.directory?(folder_path)
-    $output_folder = folder_path
+  type = params[:type]
+  path = params[:path]
+  
+  if path.nil? || path.empty?
+    return { success: false, message: "No folder path provided" }.to_json
   end
   
-  { success: true, path: folder_type == 'watch' ? $watch_folder : $output_folder }.to_json
+  # Expand the tilde to the user's home directory
+  expanded_path = path.gsub(/^~/, ENV['HOME'])
+  
+  # Ensure the path exists and is a directory
+  unless File.directory?(expanded_path)
+    # Try to create the directory if it doesn't exist
+    begin
+      FileUtils.mkdir_p(expanded_path)
+    rescue => e
+      return { success: false, message: "Could not create directory: #{e.message}" }.to_json
+    end
+  end
+  
+  # Update the appropriate folder variable
+  case type
+  when 'watch'
+    $watch_folder = expanded_path
+  when 'output'
+    $output_folder = expanded_path
+  else
+    return { success: false, message: "Invalid folder type" }.to_json
+  end
+  
+  { success: true, path: expanded_path }.to_json
 end
 
 # Views
@@ -253,13 +344,66 @@ __END__
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.7.2/font/bootstrap-icons.css" rel="stylesheet">
   <style>
+    :root {
+      --bg-color: #1a1a1a;
+      --text-color: #ffffff;
+      --card-bg: #2d2d2d;
+      --border-color: #404040;
+      --input-bg: #333333;
+      --input-border: #404040;
+      --input-text: #ffffff;
+      --btn-primary-bg: #007bff;
+      --btn-primary-border: #0056b3;
+      --btn-success-bg: #28a745;
+      --btn-success-border: #1e7e34;
+      --btn-danger-bg: #dc3545;
+      --btn-danger-border: #bd2130;
+      --btn-outline-bg: transparent;
+      --btn-outline-border: #6c757d;
+      --btn-outline-text: #6c757d;
+      --btn-outline-hover-bg: #6c757d;
+      --btn-outline-hover-text: #ffffff;
+      --status-running: #28a745;
+      --status-stopped: #dc3545;
+      --progress-bg: #404040;
+      --progress-bar-bg: #007bff;
+    }
+
+    [data-theme="light"] {
+      --bg-color: #f8f9fa;
+      --text-color: #333333;
+      --card-bg: #ffffff;
+      --border-color: #dee2e6;
+      --input-bg: #ffffff;
+      --input-border: #ced4da;
+      --input-text: #495057;
+      --btn-primary-bg: #007bff;
+      --btn-primary-border: #0056b3;
+      --btn-success-bg: #28a745;
+      --btn-success-border: #1e7e34;
+      --btn-danger-bg: #dc3545;
+      --btn-danger-border: #bd2130;
+      --btn-outline-bg: transparent;
+      --btn-outline-border: #6c757d;
+      --btn-outline-text: #6c757d;
+      --btn-outline-hover-bg: #6c757d;
+      --btn-outline-hover-text: #ffffff;
+      --status-running: #28a745;
+      --status-stopped: #dc3545;
+      --progress-bg: #e9ecef;
+      --progress-bar-bg: #007bff;
+    }
+
     body {
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-      line-height: 1.6;
-      color: #333;
-      background-color: #f8f9fa;
+      line-height: 1.5;
+      color: var(--text-color);
+      background-color: var(--bg-color);
       padding: 20px;
+      transition: background-color 0.3s ease, color 0.3s ease;
+      font-size: 0.8rem;
     }
 
     .container {
@@ -268,10 +412,11 @@ __END__
     }
 
     .card {
-      background: white;
+      background: var(--card-bg);
       border-radius: 12px;
-      box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+      box-shadow: 0 2px 4px rgba(0,0,0,0.2);
       margin-bottom: 2rem;
+      border: 1px solid var(--border-color);
     }
 
     .card-body {
@@ -279,84 +424,77 @@ __END__
     }
 
     .card-title {
-      color: #2c3e50;
+      color: var(--text-color);
       font-weight: 600;
-      margin-bottom: 1.5rem;
+      margin-bottom: 1.25rem;
+      font-size: 1rem;
     }
 
     .form-label {
       font-weight: 500;
-      color: #495057;
-      margin-bottom: 0.5rem;
+      color: var(--text-color);
+      margin-bottom: 0.4rem;
+      font-size: 0.8rem;
     }
 
     .form-control {
+      background-color: var(--input-bg);
+      border-color: var(--input-border);
+      color: var(--input-text);
       border-radius: 8px;
-      border: 1px solid #ced4da;
-      padding: 0.75rem;
+      padding: 0.6rem;
+      font-size: 0.8rem;
       transition: border-color 0.15s ease-in-out, box-shadow 0.15s ease-in-out;
     }
 
     .form-control:focus {
-      border-color: #80bdff;
+      background-color: var(--input-bg);
+      border-color: var(--btn-primary-bg);
+      color: var(--input-text);
       box-shadow: 0 0 0 0.2rem rgba(0,123,255,0.25);
     }
 
-    .folder-input-group {
-      display: flex;
-      gap: 10px;
+    .form-control::placeholder {
+      color: rgba(255, 255, 255, 0.5);
     }
 
-    .folder-input-group .form-control {
-      flex: 1;
+    [data-theme="light"] .form-control::placeholder {
+      color: rgba(0, 0, 0, 0.5);
     }
 
     .btn {
-      padding: 0.75rem 1.5rem;
+      padding: 0.6rem 1.25rem;
       font-weight: 500;
       border-radius: 8px;
       transition: all 0.2s ease-in-out;
+      font-size: 0.8rem;
     }
 
     .btn-success {
-      background-color: #28a745;
-      border-color: #28a745;
-    }
-
-    .btn-success:hover {
-      background-color: #218838;
-      border-color: #1e7e34;
+      background-color: var(--btn-success-bg);
+      border-color: var(--btn-success-border);
     }
 
     .btn-danger {
-      background-color: #dc3545;
-      border-color: #dc3545;
-    }
-
-    .btn-danger:hover {
-      background-color: #c82333;
-      border-color: #bd2130;
+      background-color: var(--btn-danger-bg);
+      border-color: var(--btn-danger-border);
     }
 
     .btn-primary {
-      background-color: #007bff;
-      border-color: #007bff;
-    }
-
-    .btn-primary:hover {
-      background-color: #0069d9;
-      border-color: #0062cc;
+      background-color: var(--btn-primary-bg);
+      border-color: var(--btn-primary-border);
     }
 
     .btn-outline-secondary {
-      color: #6c757d;
-      border-color: #6c757d;
+      color: var(--btn-outline-text);
+      border-color: var(--btn-outline-border);
+      background-color: var(--btn-outline-bg);
     }
 
     .btn-outline-secondary:hover {
-      color: #fff;
-      background-color: #6c757d;
-      border-color: #6c757d;
+      color: var(--btn-outline-hover-text);
+      background-color: var(--btn-outline-hover-bg);
+      border-color: var(--btn-outline-border);
     }
 
     .status-indicator {
@@ -367,62 +505,102 @@ __END__
       margin-right: 8px;
     }
 
-    .status-stopped {
-      background-color: #dc3545;
+    .status-running {
+      background-color: var(--status-running);
+      box-shadow: 0 0 8px var(--status-running);
     }
 
-    .status-running {
-      background-color: #28a745;
+    .status-stopped {
+      background-color: var(--status-stopped);
+      box-shadow: 0 0 8px var(--status-stopped);
     }
 
     .form-text {
-      color: #6c757d;
-      font-size: 0.875rem;
+      color: var(--text-color);
+      opacity: 0.7;
+      font-size: 0.75rem;
       margin-top: 0.25rem;
     }
 
+    .text-muted {
+      color: var(--text-color) !important;
+      opacity: 0.8;
+    }
+
+    .folder-input-group {
+      display: flex;
+      align-items: center;
+      gap: 0;
+    }
+
+    .folder-input-group .form-control {
+      border-top-right-radius: 0;
+      border-bottom-right-radius: 0;
+    }
+
+    .folder-input-group .btn {
+      border-top-left-radius: 0;
+      border-bottom-left-radius: 0;
+      padding: 0.75rem;
+      width: 42px;
+    }
+
+    .folder-input-group .btn i {
+      font-size: 1.1rem;
+    }
+
     .documentation {
-      background: white;
+      background: var(--card-bg);
       border-radius: 12px;
-      padding: 2rem;
-      box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+      padding: 1.5rem;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+      border: 1px solid var(--border-color);
+      margin-top: 2rem;
     }
 
     .documentation h1 {
-      color: #2c3e50;
-      font-size: 1.75rem;
-      margin-bottom: 1.5rem;
+      color: var(--btn-primary-bg);
+      font-size: 1.2rem;
+      margin-bottom: 1.25rem;
+      font-weight: 600;
     }
 
     .documentation h2 {
-      color: #34495e;
-      font-size: 1.5rem;
-      margin-top: 2rem;
-      margin-bottom: 1rem;
+      color: var(--btn-success-bg);
+      font-size: 1.1rem;
+      margin-top: 1.5rem;
+      margin-bottom: 0.75rem;
+      font-weight: 600;
     }
 
     .documentation p {
-      margin-bottom: 1rem;
+      margin-bottom: 0.75rem;
+      font-size: 0.8rem;
+      line-height: 1.5;
     }
 
     .documentation ul {
-      margin-bottom: 1rem;
-      padding-left: 1.5rem;
+      margin-bottom: 0.75rem;
+      padding-left: 1.25rem;
     }
 
     .documentation li {
-      margin-bottom: 0.5rem;
+      margin-bottom: 0.4rem;
+      font-size: 0.8rem;
+      line-height: 1.5;
     }
 
     .documentation code {
-      background-color: #f8f9fa;
+      background-color: var(--input-bg);
+      color: var(--btn-primary-bg);
       padding: 0.2rem 0.4rem;
       border-radius: 4px;
-      font-size: 0.875rem;
+      font-size: 0.75rem;
     }
 
     .documentation pre {
-      background-color: #f8f9fa;
+      background-color: var(--input-bg);
+      border: 1px solid var(--border-color);
       padding: 1rem;
       border-radius: 8px;
       overflow-x: auto;
@@ -430,29 +608,123 @@ __END__
     }
 
     .documentation pre code {
+      color: var(--text-color);
       background-color: transparent;
       padding: 0;
     }
+
+    .status-text {
+      font-size: 0.8rem;
+      font-weight: 500;
+    }
+
+    .processing-item {
+      font-size: 0.8rem;
+    }
+
+    .processing-status {
+      font-size: 0.75rem;
+    }
+
+    .theme-toggle {
+      background: none;
+      border: none;
+      color: var(--text-color);
+      cursor: pointer;
+      padding: 0.5rem;
+      font-size: 1.5rem;
+      transition: color 0.3s ease;
+    }
+
+    .theme-toggle:hover {
+      color: var(--btn-primary-bg);
+    }
+
+    .header-container {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 2rem;
+    }
+
+    .logo-container {
+      display: flex;
+      align-items: center;
+    }
   </style>
 </head>
-<body>
+<body data-theme="dark">
   <div class="container">
-    <h1 class="mb-4">Invoice Processor</h1>
+    <div class="header-container">
+      <div class="logo-container">
+        <img src="/icon.png" alt="eyeDOCtor Logo" style="height: 40px; margin-right: 15px;">
+        <h3 class="mb-0">eyeDOCtor</h3>
+      </div>
+      <button class="theme-toggle" onclick="toggleTheme()" title="Toggle dark mode">
+        <i class="bi bi-moon-fill"></i>
+      </button>
+    </div>
     <%= yield %>
   </div>
   
   <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
   <script>
+    // Theme handling
+    function setTheme(theme) {
+      document.body.setAttribute('data-theme', theme);
+      localStorage.setItem('theme', theme);
+      updateThemeIcon(theme);
+    }
+
+    function toggleTheme() {
+      const currentTheme = document.body.getAttribute('data-theme');
+      const newTheme = currentTheme === 'dark' ? 'light' : 'dark';
+      setTheme(newTheme);
+    }
+
+    function updateThemeIcon(theme) {
+      const icon = document.querySelector('.theme-toggle i');
+      icon.className = theme === 'dark' ? 'bi bi-moon-fill' : 'bi bi-sun-fill';
+    }
+
+    // Initialize theme
+    const savedTheme = localStorage.getItem('theme') || 'dark';
+    setTheme(savedTheme);
+
     // Update status every 2 seconds
+    let isFirstLoad = true;
+    
     setInterval(function() {
       fetch('/status')
         .then(response => response.json())
         .then(data => {
           document.getElementById('status-text').textContent = data.status;
-          document.getElementById('watch-folder').value = data.watch_folder;
-          document.getElementById('output-folder').value = data.output_folder;
-          document.getElementById('api-key').value = data.api_key;
-          document.getElementById('blocked-terms').value = data.blocked_terms;
+          
+          // Only update input fields on first load or if they're empty
+          if (isFirstLoad) {
+            document.getElementById('watch-folder').value = data.watch_folder || '';
+            document.getElementById('output-folder').value = data.output_folder || '';
+            document.getElementById('api-key').value = data.api_key || '';
+            document.getElementById('blocked-terms').value = data.blocked_terms || '';
+            isFirstLoad = false;
+          } else {
+            // Only update empty fields
+            if (!document.getElementById('watch-folder').value) {
+              document.getElementById('watch-folder').value = data.watch_folder || '';
+            }
+            if (!document.getElementById('output-folder').value) {
+              document.getElementById('output-folder').value = data.output_folder || '';
+            }
+            if (!document.getElementById('api-key').value) {
+              document.getElementById('api-key').value = data.api_key || '';
+            }
+            if (!document.getElementById('blocked-terms').value) {
+              document.getElementById('blocked-terms').value = data.blocked_terms || '';
+            }
+          }
+          
+          // Update processing queue
+          updateProcessingQueue(data.processing_queue, data.processed_files);
           
           const statusIndicator = document.getElementById('status-indicator');
           if (data.is_running) {
@@ -467,26 +739,72 @@ __END__
         });
     }, 2000);
     
-    // Start watching
-    function startWatching() {
-      fetch('/start', { method: 'POST' })
-        .then(response => response.json())
-        .then(data => {
-          if (!data.success) {
-            alert(data.message);
-          }
-        });
+    // Update processing queue display
+    function updateProcessingQueue(queue, processed) {
+      const queueContainer = document.getElementById('processing-files');
+      const progressBar = document.getElementById('progress-bar');
+      const queueStatus = document.getElementById('queue-status');
+      
+      // Clear existing items
+      queueContainer.innerHTML = '';
+      
+      // Calculate progress
+      const total = queue.length + processed.length;
+      const completed = processed.length;
+      const progress = total > 0 ? (completed / total) * 100 : 0;
+      
+      // Update progress bar
+      progressBar.style.width = progress + '%';
+      progressBar.setAttribute('aria-valuenow', progress);
+      
+      // Update queue status
+      if (total === 0) {
+        queueStatus.textContent = 'No files in queue';
+      } else {
+        queueStatus.textContent = `Processing ${queue.length} of ${total} files`;
+      }
+      
+      // Add processing files
+      queue.forEach(file => {
+        const item = document.createElement('div');
+        item.className = 'processing-item';
+        item.innerHTML = `
+          <span class="processing-name">${file}</span>
+          <span class="processing-status">
+            <i class="bi bi-hourglass-split"></i>
+          </span>
+        `;
+        queueContainer.appendChild(item);
+      });
+      
+      // Add processed files
+      processed.forEach(file => {
+        const item = document.createElement('div');
+        item.className = 'processing-item';
+        item.innerHTML = `
+          <span class="processing-name">${file}</span>
+          <span class="processing-status">
+            <i class="bi bi-check-circle-fill"></i>
+          </span>
+        `;
+        queueContainer.appendChild(item);
+      });
     }
     
-    // Stop watching
-    function stopWatching() {
-      fetch('/stop', { method: 'POST' })
-        .then(response => response.json())
-        .then(data => {
-          if (!data.success) {
-            alert(data.message);
-          }
-        });
+    // Toggle API key visibility
+    function toggleApiKeyVisibility() {
+      const apiKeyInput = document.getElementById('api-key');
+      const eyeIcon = document.querySelector('.bi-eye');
+      
+      if (apiKeyInput.type === 'password') {
+        apiKeyInput.type = 'text';
+        eyeIcon.classList.remove('bi-eye');
+        eyeIcon.classList.add('bi-eye-slash');
+      } else {
+        apiKeyInput.type = 'password';
+        eyeIcon.classList.remove('bi-eye-slash');
+        eyeIcon.classList.add('bi-eye');
+      }
     }
     
     // Save settings
@@ -514,61 +832,151 @@ __END__
         }
       });
     }
-
+    
+    // Start watching
+    function startWatching() {
+      fetch('/start', { method: 'POST' })
+        .then(response => response.json())
+        .then(data => {
+          if (!data.success) {
+            alert(data.message);
+          }
+        });
+    }
+    
+    // Stop watching
+    function stopWatching() {
+      fetch('/stop', { method: 'POST' })
+        .then(response => response.json())
+        .then(data => {
+          if (!data.success) {
+            alert(data.message);
+          }
+        });
+    }
+    
     // Select folder
     function selectFolder(type) {
-      const input = document.createElement('input');
-      input.type = 'file';
-      input.webkitdirectory = true;
-      input.directory = true;
-      
-      input.onchange = function(e) {
-        const path = e.target.files[0].path.split('/').slice(0, -1).join('/');
-        fetch(`/select_folder?type=${type}&path=${encodeURIComponent(path)}`)
-          .then(response => response.json())
-          .then(data => {
-            if (data.success) {
-              document.getElementById(`${type}-folder`).value = data.path;
+      // Use the native folder picker API if available
+      if (window.showDirectoryPicker) {
+        window.showDirectoryPicker()
+          .then(dirHandle => {
+            // Get the directory name
+            const dirName = dirHandle.name;
+            
+            // For security reasons, we need to ask for the full path
+            // Use the actual selected folder path
+            const defaultPath = `~/Documents/${dirName}`;
+            const fullPath = prompt(`Please enter the full path to the "${dirName}" folder:`, defaultPath);
+            
+            if (fullPath) {
+              // Update the input field immediately
+              document.getElementById(`${type}-folder`).value = fullPath;
+              
+              // Send the path to the server
+              fetch(`/select_folder?type=${type}&path=${encodeURIComponent(fullPath)}`)
+                .then(response => response.json())
+                .then(data => {
+                  if (!data.success) {
+                    alert(data.message);
+                  }
+                })
+                .catch(err => {
+                  console.error('Error updating folder:', err);
+                  alert('Error updating folder selection');
+                });
+            }
+          })
+          .catch(err => {
+            console.error('Error selecting folder:', err);
+            // Fallback to manual path entry
+            const defaultPath = type === 'watch' ? '~/Documents/eyeDOCtor/watch' : '~/Documents/eyeDOCtor/processed';
+            const manualPath = prompt(`Please enter the full path to the ${type} folder:`, defaultPath);
+            if (manualPath) {
+              document.getElementById(`${type}-folder`).value = manualPath;
+              fetch(`/select_folder?type=${type}&path=${encodeURIComponent(manualPath)}`)
+                .then(response => response.json())
+                .then(data => {
+                  if (!data.success) {
+                    alert(data.message);
+                  }
+                });
             }
           });
-      };
-      
-      input.click();
+      } else {
+        // Fallback for browsers that don't support the Directory Picker API
+        const defaultPath = type === 'watch' ? '~/Documents/eyeDOCtor/watch' : '~/Documents/eyeDOCtor/processed';
+        const manualPath = prompt(`Please enter the full path to the ${type} folder:`, defaultPath);
+        if (manualPath) {
+          document.getElementById(`${type}-folder`).value = manualPath;
+          fetch(`/select_folder?type=${type}&path=${encodeURIComponent(manualPath)}`)
+            .then(response => response.json())
+            .then(data => {
+              if (!data.success) {
+                alert(data.message);
+              }
+            });
+        }
+      }
     }
   </script>
 </body>
 </html>
 
 @@ index
+<div class="card mb-4">
+  <div class="card-body">
+    <h5 class="card-title">Document Processing Queue</h5>
+    <div id="queue-panel" class="collapse show">
+      <div class="progress mb-3">
+        <div id="progress-bar" class="progress-bar" role="progressbar" style="width: 0%"></div>
+      </div>
+      <div id="queue-status" class="text-muted mb-2">No files in queue</div>
+      <div id="processing-files" class="list-group">
+        <!-- Processing files will be listed here -->
+      </div>
+    </div>
+  </div>
+</div>
+
 <div class="card">
   <div class="card-body">
     <h5 class="card-title">Document Scanner Status</h5>
     <p class="card-text">
       <span id="status-indicator" class="status-indicator status-stopped"></span>
-      <span id="status-text"><%= $status %></span>
+      <span id="status-text text-muted"><%= $status %></span>
     </p>
     
     <div class="mb-3">
-      <label for="watch-folder" class="form-label">Scan Folder:</label>
-      <div class="folder-input-group">
-        <input type="text" class="form-control" id="watch-folder" value="<%= $watch_folder %>" readonly placeholder="Choose where to put your scans">
-        <button class="btn btn-outline-secondary" onclick="selectFolder('watch')">Choose Folder</button>
-      </div>
-      <div class="form-text">Put your scanned documents here</div>
-    </div>
-    
-    <div class="mb-3">
-      <label for="output-folder" class="form-label">Organized Folder:</label>
+      <label for="output-folder" class="form-label">Organized Folder (output):</label>
       <div class="folder-input-group">
         <input type="text" class="form-control" id="output-folder" value="<%= $output_folder %>" readonly placeholder="Choose where to save organized files">
-        <button class="btn btn-outline-secondary" onclick="selectFolder('output')">Choose Folder</button>
+        <button class="btn btn-outline-secondary" onclick="selectFolder('output')" title="Choose folder">
+          <i class="bi bi-folder2-open"></i>
+        </button>
       </div>
       <div class="form-text">Your organized files will go here</div>
     </div>
     
     <div class="mb-3">
+      <label for="watch-folder" class="form-label">Scan Folder (input):</label>
+      <div class="folder-input-group">
+        <input type="text" class="form-control" id="watch-folder" value="<%= $watch_folder %>" readonly placeholder="Choose where to put your scans">
+        <button class="btn btn-outline-secondary" onclick="selectFolder('watch')" title="Choose folder">
+          <i class="bi bi-folder2-open"></i>
+        </button>
+      </div>
+      <div class="form-text">Put your scanned documents here</div>
+    </div>
+    
+    <div class="mb-3">
       <label for="api-key" class="form-label">OpenAI API Key:</label>
-      <input type="password" class="form-control" id="api-key" value="<%= $api_key %>" placeholder="Enter your OpenAI API key">
+      <div class="input-group">
+        <input type="password" class="form-control" id="api-key" value="<%= $api_key %>" placeholder="Enter your OpenAI API key">
+        <button class="btn btn-outline-secondary" type="button" onclick="toggleApiKeyVisibility()">
+          <i class="bi bi-eye"></i>
+        </button>
+      </div>
       <div class="form-text">Required to read and understand your documents</div>
     </div>
     
@@ -590,4 +998,4 @@ __END__
 
 <div class="documentation">
   <%= markdown(DOCUMENTATION) %>
-</div> 
+</div>
