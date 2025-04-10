@@ -46,6 +46,10 @@ class InvoiceProcessor
     @output_folder = output_folder || File.expand_path('~/Documents/eyeDOCtor/processed')
     @blocked_terms = blocked_terms
     
+    # Initialize cache for document analysis
+    @cache_file = File.join(app_dir, 'document_cache.json')
+    @document_cache = load_cache
+    
     setup_folders
     setup_openai
     @last_api_call = Time.now.to_f
@@ -143,6 +147,14 @@ class InvoiceProcessor
 
   def analyze_with_chatgpt(file_path)
     log_info("Analyzing image with ChatGPT Vision")
+    
+    # Check if we have a cached result for this file
+    file_hash = Digest::MD5.hexdigest(File.read(file_path))
+    if @document_cache[file_hash]
+      log_info("Using cached result for #{file_path}")
+      return @document_cache[file_hash]
+    end
+    
     max_retries = 3
     retry_count = 0
     retry_delay = 2  # Initial delay in seconds
@@ -162,10 +174,10 @@ class InvoiceProcessor
       image_data = Base64.strict_encode64(File.read(file_path))
       
       prompt = <<~PROMPT
-        Extract from invoice image:
-        1. Company Name (vendor at top, exclude Yankee Spirits/Liquor/Liquors)
-        2. Invoice Number (from "Invoice #" field)
-        3. Invoice Date (from "Invoice Date" field, MM/DD/YYYY)
+        Extract from invoice:
+        1. Company Name (vendor at top)
+        2. Invoice Number
+        3. Invoice Date (MM/DD/YYYY)
 
         Return JSON:
         {
@@ -203,7 +215,7 @@ class InvoiceProcessor
               ]
             }
           ],
-          max_tokens: 500
+          max_tokens: 200
         }
       )
 
@@ -219,7 +231,7 @@ class InvoiceProcessor
         log_error("No content in ChatGPT response. Full response: #{response.inspect}")
         raise "No content in ChatGPT response"
       end
-
+      
       log_debug("Response content: #{content}")
       
       # Try to extract JSON from the response content
@@ -242,6 +254,10 @@ class InvoiceProcessor
 
       log_info("ChatGPT Vision analysis successful")
       log_info("Extracted data: company_name=#{result['company_name']}, invoice_number=#{result['invoice_number']}, invoice_date=#{result['invoice_date']}")
+      
+      # Cache the result
+      @document_cache[file_hash] = result
+      save_cache
       
       result
     rescue Errno::ECONNREFUSED, Errno::ETIMEDOUT, Faraday::ConnectionFailed, Net::OpenTimeout => e
@@ -490,6 +506,27 @@ class InvoiceProcessor
   def log_debug(message)
     @logger.debug(message)
     @console_logger.debug(message)
+  end
+
+  def load_cache
+    if File.exist?(@cache_file)
+      begin
+        JSON.parse(File.read(@cache_file))
+      rescue => e
+        log_error("Error loading cache: #{e.message}")
+        {}
+      end
+    else
+      {}
+    end
+  end
+  
+  def save_cache
+    begin
+      File.write(@cache_file, JSON.pretty_generate(@document_cache))
+    rescue => e
+      log_error("Error saving cache: #{e.message}")
+    end
   end
 end
 

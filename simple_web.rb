@@ -95,6 +95,7 @@ configure do
   set :bind, '0.0.0.0'
   set :server, 'webrick'
   set :run, true
+  set :inline_templates, true  # Enable inline templates
 end
 
 # Markdown renderer
@@ -309,14 +310,11 @@ get '/select_folder' do
     return { success: false, message: "No folder path provided" }.to_json
   end
   
-  # Expand the tilde to the user's home directory
-  expanded_path = path.gsub(/^~/, ENV['HOME'])
-  
   # Ensure the path exists and is a directory
-  unless File.directory?(expanded_path)
+  unless File.directory?(path)
     # Try to create the directory if it doesn't exist
     begin
-      FileUtils.mkdir_p(expanded_path)
+      FileUtils.mkdir_p(path)
     rescue => e
       return { success: false, message: "Could not create directory: #{e.message}" }.to_json
     end
@@ -325,14 +323,14 @@ get '/select_folder' do
   # Update the appropriate folder variable
   case type
   when 'watch'
-    $watch_folder = expanded_path
+    $watch_folder = path
   when 'output'
-    $output_folder = expanded_path
+    $output_folder = path
   else
     return { success: false, message: "Invalid folder type" }.to_json
   end
   
-  { success: true, path: expanded_path }.to_json
+  { success: true, path: path }.to_json
 end
 
 # Views
@@ -828,19 +826,31 @@ __END__
       .then(response => response.json())
       .then(data => {
         if (data.success) {
-          alert('Settings saved successfully');
+          console.log('Settings saved successfully');
         } else {
           alert(data.message);
         }
       });
     }
     
+    // Auto-save settings when input fields change
+    document.getElementById('watch-folder').addEventListener('change', saveSettings);
+    document.getElementById('output-folder').addEventListener('change', saveSettings);
+    document.getElementById('api-key').addEventListener('change', saveSettings);
+    document.getElementById('blocked-terms').addEventListener('change', saveSettings);
+    
     // Start watching
     function startWatching() {
       fetch('/start', { method: 'POST' })
         .then(response => response.json())
         .then(data => {
-          if (!data.success) {
+          if (data.success) {
+            // Update UI immediately
+            document.getElementById('status-text').textContent = "Examining documents...";
+            document.getElementById('status-indicator').className = 'status-indicator status-running';
+            document.getElementById('start-btn').disabled = true;
+            document.getElementById('stop-btn').disabled = false;
+          } else {
             alert(data.message);
           }
         });
@@ -851,7 +861,13 @@ __END__
       fetch('/stop', { method: 'POST' })
         .then(response => response.json())
         .then(data => {
-          if (!data.success) {
+          if (data.success) {
+            // Update UI immediately
+            document.getElementById('status-text').textContent = "Stopped";
+            document.getElementById('status-indicator').className = 'status-indicator status-stopped';
+            document.getElementById('start-btn').disabled = false;
+            document.getElementById('stop-btn').disabled = true;
+          } else {
             alert(data.message);
           }
         });
@@ -868,7 +884,7 @@ __END__
             
             // For security reasons, we need to ask for the full path
             // Use the actual selected folder path
-            const defaultPath = `~/Documents/${dirName}`;
+            const defaultPath = `/Users/manraj/Documents/${dirName}`;
             const fullPath = prompt(`Please enter the full path to the "${dirName}" folder:`, defaultPath);
             
             if (fullPath) {
@@ -881,6 +897,9 @@ __END__
                 .then(data => {
                   if (!data.success) {
                     alert(data.message);
+                  } else {
+                    // Auto-save settings after folder selection
+                    saveSettings();
                   }
                 })
                 .catch(err => {
@@ -892,7 +911,7 @@ __END__
           .catch(err => {
             console.error('Error selecting folder:', err);
             // Fallback to manual path entry
-            const defaultPath = type === 'watch' ? '~/Documents/eyeDOCtor/watch' : '~/Documents/eyeDOCtor/processed';
+            const defaultPath = type === 'watch' ? `/Users/manraj/Documents/eyeDOCtor/watch` : `/Users/manraj/Documents/eyeDOCtor/processed`;
             const manualPath = prompt(`Please enter the full path to the ${type} folder:`, defaultPath);
             if (manualPath) {
               document.getElementById(`${type}-folder`).value = manualPath;
@@ -901,13 +920,16 @@ __END__
                 .then(data => {
                   if (!data.success) {
                     alert(data.message);
+                  } else {
+                    // Auto-save settings after folder selection
+                    saveSettings();
                   }
                 });
             }
           });
       } else {
         // Fallback for browsers that don't support the Directory Picker API
-        const defaultPath = type === 'watch' ? '~/Documents/eyeDOCtor/watch' : '~/Documents/eyeDOCtor/processed';
+        const defaultPath = type === 'watch' ? `/Users/manraj/Documents/eyeDOCtor/watch` : `/Users/manraj/Documents/eyeDOCtor/processed`;
         const manualPath = prompt(`Please enter the full path to the ${type} folder:`, defaultPath);
         if (manualPath) {
           document.getElementById(`${type}-folder`).value = manualPath;
@@ -916,6 +938,9 @@ __END__
             .then(data => {
               if (!data.success) {
                 alert(data.message);
+              } else {
+                // Auto-save settings after folder selection
+                saveSettings();
               }
             });
         }
@@ -924,7 +949,6 @@ __END__
   </script>
 </body>
 </html>
-
 @@ index
 <div class="card mb-4">
   <div class="card-body">
@@ -946,7 +970,7 @@ __END__
     <h5 class="card-title">Document Scanner Status</h5>
     <p class="card-text">
       <span id="status-indicator" class="status-indicator status-stopped"></span>
-      <span id="status-text text-muted"><%= $status %></span>
+      <span id="status-text" class="text-muted"><%= $status %></span>
     </p>
     
     <div class="mb-3">

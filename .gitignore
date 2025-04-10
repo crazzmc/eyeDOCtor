@@ -32,3 +32,6 @@
 .bundle/
 Watcher AI.app/
 *.app/
+settings.json
+
+document_cache.json
