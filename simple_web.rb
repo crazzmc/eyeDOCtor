@@ -11,6 +11,13 @@ require 'fileutils'
 # Load environment variables
 Dotenv.load
 
+# Configure Sinatra logging
+set :logging, false
+set :server_settings, {
+  :Logger => WEBrick::Log::new("/dev/null", 7),
+  :AccessLog => []
+}
+
 # Global variables
 $processor = nil
 $watch_thread = nil
@@ -88,11 +95,6 @@ configure do
   set :bind, '0.0.0.0'
   set :server, 'webrick'
   set :run, true
-  set :server_settings, { 
-    :AccessLog => [],
-    :Logger => WEBrick::Log::new("/dev/null", 7)
-  }
-  enable :logging
 end
 
 # Markdown renderer
@@ -195,7 +197,7 @@ end
 # Serve the icon file
 get '/icon.png' do
   content_type 'image/png'
-  send_file File.join(settings.public_folder, 'icon.png')
+  send_file File.join(File.dirname(__FILE__), 'icon.png')
 end
 
 post '/start' do

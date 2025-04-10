@@ -58,28 +58,6 @@ eyeDOCtor examines documents and extracts key information such as:
 
 Files are then renamed and organized based on this information.
 
-## Building Distributions
-
-### Windows
-
-To create a Windows executable:
-
-```bash
-ruby package_windows.rb
-```
-
-This will create an `eyedoctor.exe` file that can be distributed to Windows users.
-
-### macOS
-
-To create a macOS application:
-
-```bash
-ruby package_macos.rb
-```
-
-This will create an `eyeDOCtor.app` file that can be distributed to macOS users.
-
 ## Security
 
 - API keys are stored locally and never transmitted
